@@ -2,7 +2,7 @@ import os
 import subprocess
 from pathlib import Path
 from shutil import rmtree
-from typing import Generator
+from typing import Any, Generator, Optional
 from uuid import uuid4
 
 import pandas as pd
@@ -12,9 +12,11 @@ from sqlalchemy.orm import Session
 from theflow.settings import settings
 
 from kotaemon.base import Document, Param, RetrievedDocument
+from kotaemon.embeddings import FastEmbedEmbeddings
 
 from ..pipelines import BaseFileIndexRetriever, IndexDocumentPipeline, IndexPipeline
 from .visualize import create_knowledge_graph, visualize_graph
+import shutil
 
 try:
     from graphrag.query.context_builder.entity_extraction import EntityVectorStoreKey
@@ -31,6 +33,7 @@ try:
         LocalSearchMixedContext,
     )
     from graphrag.vector_stores.lancedb import LanceDBVectorStore
+    from graphrag.query.llm.base import BaseTextEmbedding
 except ImportError:
     print(
         (
@@ -114,6 +117,9 @@ class GraphRAGIndexingPipeline(IndexDocumentPipeline):
         )
         result = subprocess.run(command, capture_output=True, text=True)
         print(result.stdout)
+        # overwrite settings.yaml with customized version
+        shutil.copy2('./graphrag_settings.yaml', f'{input_path}/settings.yaml')
+
         command = command[:-1]
 
         # Run the command and stream stdout
@@ -121,6 +127,25 @@ class GraphRAGIndexingPipeline(IndexDocumentPipeline):
             if process.stdout:
                 for line in process.stdout:
                     yield Document(channel="debug", text=line)
+        
+        # we suppress embeding step for entity description, because currently there is no way to ignore OPENAI
+        # now we do embeding with the entity artifact
+        # check if already embedeed (columns contain embedding wording)
+        if is_using_fast_embedding():
+            print(f"embedding with fast_embedding to entity name+description start!")
+            output_path = f'{input_path}/output'
+            final_entities_df = pd.read_parquet(f'{output_path}/create_final_entities.parquet')
+            embedding_column_name = "description_embedding"
+            final_entities_df["name_description"] = final_entities_df["name"] + ":" + final_entities_df["description"]
+            fast_embedding_model = FastEmbedEmbeddings()
+            texts = final_entities_df['name_description'].tolist()
+            embeddings = fast_embedding_model.invoke(texts)
+            embedding_vestors = [doc.embedding for doc in embeddings]
+            final_entities_df[embedding_column_name] = embedding_vestors
+            final_entities_df.drop(columns="name_description", inplace=True)
+            final_entities_df.to_parquet(f'{output_path}/create_final_entities.parquet', index=False)
+            print(f"embedding with fast_embedding to entity name+description finished!")
+
 
     def stream(
         self, file_paths: str | Path | list[str | Path], reindex: bool = False, **kwargs
@@ -222,14 +247,20 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
         text_units = read_indexer_text_units(text_unit_df)
 
         embedding_model = os.getenv("GRAPHRAG_EMBEDDING_MODEL")
-        text_embedder = OpenAIEmbedding(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            api_base=None,
-            api_type=OpenaiApiType.OpenAI,
-            model=embedding_model,
-            deployment_name=embedding_model,
-            max_retries=20,
-        )
+
+        # check what embedder to use, default graphrag only supports openai
+        # but now we can use fasttextembedding local model
+        if is_using_fast_embedding():
+            text_embedder = FastEmbedder()
+        else:
+            text_embedder = OpenAIEmbedding(
+                api_key=os.getenv("OPENAI_API_KEY"),
+                api_base=None,
+                api_type=OpenaiApiType.OpenAI,
+                model=embedding_model,
+                deployment_name=embedding_model,
+                max_retries=20,
+            )
         token_encoder = tiktoken.get_encoding("cl100k_base")
 
         context_builder = LocalSearchMixedContext(
@@ -350,3 +381,24 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
                 },
             ),
         ]
+
+
+class FastEmbedder(BaseTextEmbedding):
+    
+    embedder: FastEmbedEmbeddings
+
+    def __init__(self):
+        self.embedder = FastEmbedEmbeddings()
+   
+    def embed(self, text: str, **kwargs: Any) -> list[float]:
+        embedding = self.embedder.invoke(text)
+        return embedding[0].embedding
+
+   
+    async def aembed(self, text: str, **kwargs: Any) -> list[float]:
+        embedding = await self.embedder.ainvoke(text)
+        return embedding[0].embedding
+    
+
+def is_using_fast_embedding():
+    return 'GRAPHRAG_EMBEDDING_MODEL' in os.environ and os.environ.get('GRAPHRAG_EMBEDDING_MODEL', None) == "fast"

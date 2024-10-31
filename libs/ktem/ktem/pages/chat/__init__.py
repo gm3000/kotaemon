@@ -98,15 +98,15 @@ class ChatPage(BasePage):
                                 self._indices_input.append(gr_index)
                         setattr(self, f"_index_{index.id}", index_ui)
 
-                if len(self._app.index_manager.indices) > 0:
-                    with gr.Accordion(label="Quick Upload") as _:
-                        self.quick_file_upload = File(
-                            file_types=list(KH_DEFAULT_FILE_EXTRACTORS.keys()),
-                            file_count="multiple",
-                            container=True,
-                            show_label=False,
-                        )
-                        self.quick_file_upload_status = gr.Markdown()
+                # if len(self._app.index_manager.indices) > 0:
+                #     with gr.Accordion(label="Quick Upload") as _:
+                #         self.quick_file_upload = File(
+                #             file_types=list(KH_DEFAULT_FILE_EXTRACTORS.keys()),
+                #             file_count="multiple",
+                #             container=True,
+                #             show_label=False,
+                #         )
+                #         self.quick_file_upload_status = gr.Markdown()
 
                 self.report_issue = ReportIssue(self._app)
 
@@ -593,7 +593,12 @@ class ChatPage(BasePage):
         if not chat_input:
             raise ValueError("Input is empty")
 
+        if not chat_history:
+            chat_history = []
+
         if not conv_id:
+            if not user_id:
+                user_id = 1
             id_, update = self.chat_control.new_conv(user_id)
             with Session(engine) as session:
                 statement = select(Conversation).where(Conversation.id == id_)
@@ -854,6 +859,8 @@ class ChatPage(BasePage):
         queue: asyncio.Queue[Optional[dict]] = asyncio.Queue()
 
         # construct the pipeline
+        if not user_id:
+                user_id = 1
         pipeline, reasoning_state = self.create_pipeline(
             settings, reasoning_type, llm_type, state, user_id, *selecteds
         )
