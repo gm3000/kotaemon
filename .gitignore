@@ -4,7 +4,7 @@
 activate*
 activate/*
 kotaemon-env*
-.env
+#.env
 
 ### Emacs ###
 # -*- mode: gitignore; -*-
