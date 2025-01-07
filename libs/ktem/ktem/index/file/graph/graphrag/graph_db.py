@@ -44,6 +44,72 @@ def read_indexer_entities(final_nodes: pd.DataFrame, final_entities: pd.DataFram
     return final_df
 
 
+def add_source_file_to_db(conn: kuzu.Connection, documents: list[Document]):
+    conn.execute(
+        "CREATE NODE TABLE FileChunk(id STRING, page_label STRING, text STRING, PRIMARY KEY (id))"
+    )
+    conn.execute(
+        "CREATE NODE TABLE File(id STRING, file_name STRING, file_path STRING, file_type STRING, file_size INT64, creation_date STRING, last_modified_date STRING, collection_name STRING, thumbnail_doc_id STRING, PRIMARY KEY (id))"
+    )
+    conn.execute("CREATE REL TABLE HAS_FILE_CHUNK(FROM File TO FileChunk)")
+
+    # Initialize lists to store data for each DataFrame
+    file_chunk_data = []
+    file_data = []
+    file_file_chunk_rel_data = []
+
+    # Use a set to keep track of unique file_ids to avoid duplicates in file_df
+    unique_file_ids = set()
+
+    # Iterate through the list of Document objects
+    for doc in documents:
+        # Extract data for file_chunk_df
+        file_chunk_data.append(
+            {
+                "id": doc.doc_id,
+                "page_label": doc.metadata["page_label"],
+                "text": doc.text,
+            }
+        )
+
+        # Extract data for file_df (only if file_id is not already processed)
+        file_id = doc.metadata["file_id"]
+        if file_id not in unique_file_ids:
+            unique_file_ids.add(file_id)
+            file_data.append(
+                {
+                    "id": file_id,
+                    "file_name": doc.metadata["file_name"],
+                    "file_path": doc.metadata["file_path"],
+                    "file_type": doc.metadata["file_type"],
+                    "file_size": doc.metadata["file_size"],
+                    "creation_date": doc.metadata["creation_date"],
+                    "last_modified_date": doc.metadata["last_modified_date"],
+                    "collection_name": doc.metadata["collection_name"],
+                    "thumbnail_doc_id": doc.metadata["thumbnail_doc_id"],
+                }
+            )
+
+        # Extract data for file_file_chunk_rel_df
+        file_file_chunk_rel_data.append({"FROM": file_id, "TO": doc.doc_id})
+
+    # Create DataFrames
+    file_chunk_df = pd.DataFrame(file_chunk_data)
+    file_df = pd.DataFrame(file_data)
+    file_file_chunk_rel_df = pd.DataFrame(file_file_chunk_rel_data)
+
+    print(f"file chunks count: {len(file_chunk_df)}")
+    print(f"file count: {len(file_df)}")
+    print(f"file file chunk relation count: {len(file_file_chunk_rel_df)}")
+
+    # add data to graph database
+    conn.execute("COPY FileChunk from file_chunk_df")
+    conn.execute("COPY File from file_df")
+    conn.execute("COPY HAS_FILE_CHUNK from file_file_chunk_rel_df")
+
+    return file_chunk_df
+
+
 def create_graph_db(path: str, docs: list[Document]):
     GRAPHRAG_FOLDER = f"{path}/output"
 
@@ -328,5 +394,23 @@ def create_graph_db(path: str, docs: list[Document]):
     )
 
     conn.execute("COPY HAS_FINDING from community_finding_rel_df")
+
+    # connect graphrag schema with the kotaemone data schema
+    file_chunk_df = add_source_file_to_db(conn, docs)
+    file_chunk_df["title"] = file_chunk_df["id"] + ".txt"
+    document_file_chunk_rel_df = pd.merge(
+        final_documents_df_2,
+        file_chunk_df,
+        on="title",
+        how="inner",
+        suffixes=("_from", "_to"),
+    )
+    document_file_chunk_rel_df["FROM"] = document_file_chunk_rel_df["id_from"]
+    document_file_chunk_rel_df["TO"] = document_file_chunk_rel_df["id_to"]
+    document_file_chunk_rel_df2 = document_file_chunk_rel_df[["FROM", "TO"]]
+    print(f"merged document count: {len(document_file_chunk_rel_df2)}")
+
+    conn.execute("CREATE TABLE REL FROM_FILE_CHUNK(FROM Document TO FileChunk)")
+    conn.execute("COPY FROM_FILE_CHUNK from document_file_chunk_rel_df2")
 
     return conn
