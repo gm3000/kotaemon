@@ -174,6 +174,26 @@ class SettingsPage(BasePage):
                 },
             )
 
+            ## disable other setting for normal user
+            def toggle_login_visibility(user_id):
+                with Session(engine) as session:
+                    user = session.exec(select(User).where(User.id == user_id)).first()
+                    if user is None:
+                        return (gr.update(visible=False), gr.update(visible=False))
+
+                    is_admin = user.admin
+                    return (gr.update(visible=is_admin), gr.update(visible=is_admin))
+
+            self._app.subscribe_event(
+                name="onSignIn",
+                definition={
+                    "fn": toggle_login_visibility,
+                    "inputs": [self._user_id],
+                    "outputs": [self.ret_tab, self.rea_tab],
+                    "show_progress": "hidden",
+                },
+            )
+
     def on_register_events(self):
         self.setting_save_btn.click(
             self.save_setting,
@@ -275,7 +295,9 @@ class SettingsPage(BasePage):
         #         self._components[f"index.{n}"] = obj
 
         id2name = {k: v.name for k, v in self._app.index_manager.info().items()}
-        with gr.Tab("Retrieval settings", visible=self._render_index_tab):
+        with gr.Tab(
+            "Retrieval settings", visible=self._render_index_tab
+        ) as self.ret_tab:
             for pn, sig in self._default_settings.index.options.items():
                 name = id2name.get(pn, f"<id {pn}>")
                 with gr.Tab(name):
@@ -288,7 +310,9 @@ class SettingsPage(BasePage):
                             self._embeddings.append(obj)
 
     def reasoning_tab(self):
-        with gr.Tab("Reasoning settings", visible=self._render_reasoning_tab):
+        with gr.Tab(
+            "Reasoning settings", visible=self._render_reasoning_tab
+        ) as self.rea_tab:
             with gr.Group():
                 for n, si in self._default_settings.reasoning.settings.items():
                     if n == "use":

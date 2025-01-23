@@ -252,7 +252,7 @@ class GraphExtractor:
 
                 if (
                     record_attributes[0] == '"relationship"'
-                    and len(record_attributes) >= 5
+                    and len(record_attributes) >= 7
                 ):
                     # add this record as edge
                     source = clean_str(record_attributes[1].upper())

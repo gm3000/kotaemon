@@ -101,6 +101,16 @@ def create_final_relationships_flow(
     # Explode the DataFrame to add new rows for each name and date
     relationships = relationships.explode(["name", "date"])
 
+    # Remove duplicate name + date pairs under the same id
+    relationships = relationships.drop_duplicates(subset=["id", "name", "date"])
+
+    # Generate a unique ID for each row by appending a suffix to the original ID
+    relationships["id"] = (
+        relationships["id"].astype(str)
+        + "_"
+        + relationships.groupby("id").cumcount().astype(str)
+    )
+
     # Reset index after exploding
     relationships = relationships.reset_index(drop=True)
 

@@ -103,8 +103,11 @@ def add_source_file_to_db(conn: kuzu.Connection, documents: list[Document]):
     print(f"file file chunk relation count: {len(file_file_chunk_rel_df)}")
 
     # add data to graph database
+    print("COPY FileChunk from file_chunk_df")
     conn.execute("COPY FileChunk from file_chunk_df")
+    print("COPY File from file_df")
     conn.execute("COPY File from file_df")
+    print("COPY HAS_FILE_CHUNK from file_file_chunk_rel_df")
     conn.execute("COPY HAS_FILE_CHUNK from file_file_chunk_rel_df")
 
     return file_chunk_df
@@ -178,13 +181,13 @@ def create_graph_db(path: str, docs: list[Document]):
     final_entity_df = read_indexer_entities(final_nodes_df, _final_entity_df)
     final_entity_df_2 = final_entity_df.copy()
     final_entity_df_2["text_unit_ids"] = final_entity_df_2["text_unit_ids"].apply(
-        lambda x: x.tolist()
+        lambda x: x.tolist() if x is not None else []
     )
 
     final_relationships_df_2 = final_relationships_df.copy()
     final_relationships_df_2["text_unit_ids"] = final_relationships_df_2[
         "text_unit_ids"
-    ].apply(lambda x: x.tolist())
+    ].apply(lambda x: x.tolist() if x is not None else [])
     # Convert 'date' column to datetime, treating empty strings as NaT
     final_relationships_df_2["date"] = pd.to_datetime(
         final_relationships_df_2["date"], errors="coerce"
@@ -197,41 +200,47 @@ def create_graph_db(path: str, docs: list[Document]):
 
     final_chunk_df_2 = final_chunk_df.copy()
     final_chunk_df_2["document_ids"] = final_chunk_df_2["document_ids"].apply(
-        lambda x: x.tolist()
+        lambda x: x.tolist() if x is not None else []
     )
     final_chunk_df_2["entity_ids"] = final_chunk_df_2["entity_ids"].apply(
-        lambda x: x.tolist()
+        lambda x: x.tolist() if x is not None else []
     )
     final_chunk_df_2["relationship_ids"] = final_chunk_df_2["relationship_ids"].apply(
-        lambda x: x.tolist()
+        lambda x: x.tolist() if x is not None else []
     )
 
     final_documents_df_2 = final_documents_df.copy()
     final_documents_df_2["text_unit_ids"] = final_documents_df_2["text_unit_ids"].apply(
-        lambda x: x.tolist()
+        lambda x: x.tolist() if x is not None else []
     )
+    final_documents_df_2 = final_documents_df_2.drop_duplicates(subset=["id"])
 
     final_community_df_2 = final_community_df.copy()
     final_community_df_2["entity_ids"] = final_community_df_2["entity_ids"].apply(
-        lambda x: x.tolist()
+        lambda x: x.tolist() if x is not None else []
     )
     final_community_df_2["relationship_ids"] = final_community_df_2[
         "relationship_ids"
-    ].apply(lambda x: x.tolist())
+    ].apply(lambda x: x.tolist() if x is not None else [])
     final_community_df_2["text_unit_ids"] = final_community_df_2["text_unit_ids"].apply(
-        lambda x: x.tolist()
+        lambda x: x.tolist() if x is not None else []
     )
 
     final_community_report_df_2 = final_community_report_df.copy()
     final_community_report_df_2["findings"] = final_community_report_df_2[
         "findings"
-    ].apply(lambda x: json.dumps(x.tolist()))
+    ].apply(lambda x: json.dumps(x.tolist() if x is not None else []))
 
     ## import nodes data directly fromn df
+    print("COPY Entity FROM final_entity_df_2")
     conn.execute("COPY Entity FROM final_entity_df_2")
+    print("COPY Document FROM final_documents_df_2")
     conn.execute("COPY Document FROM final_documents_df_2")
+    print("COPY Chunk FROM final_chunk_df_2")
     conn.execute("COPY Chunk FROM final_chunk_df_2")
+    print("COPY Community FROM final_community_df_2")
     conn.execute("COPY Community FROM final_community_df_2")
+    print("COPY CommunityReport FROM final_community_report_df_2")
     conn.execute("COPY CommunityReport FROM final_community_report_df_2")
 
     # Create empty findings dataframe with desired schema
@@ -288,6 +297,7 @@ def create_graph_db(path: str, docs: list[Document]):
     )
 
     # Import the relationships
+    print("COPY RELATED from final_relationships_df_2")
     conn.execute("COPY RELATED from final_relationships_df_2")
 
     ## import chunk -> document
@@ -305,6 +315,7 @@ def create_graph_db(path: str, docs: list[Document]):
     # Ensure column types
     chunk_doc_rel_df = chunk_doc_rel_df.astype({"FROM": "string", "TO": "string"})
 
+    print("COPY PART_OF from chunk_doc_rel_df")
     conn.execute("COPY PART_OF from chunk_doc_rel_df")
 
     ## import chunk -HAS_ENTITY-> entity
@@ -321,6 +332,7 @@ def create_graph_db(path: str, docs: list[Document]):
     # Ensure column types
     chunk_entity_rel_df = chunk_entity_rel_df.astype({"FROM": "string", "TO": "string"})
 
+    print("COPY HAS_ENTITY from chunk_entity_rel_df")
     conn.execute("COPY HAS_ENTITY from chunk_entity_rel_df")
 
     # Import community -HAS_CHUNK-> Chunk
@@ -340,6 +352,7 @@ def create_graph_db(path: str, docs: list[Document]):
         {"FROM": "string", "TO": "string"}
     )
 
+    print("COPY HAS_CHUNK from community_chunk_rel_df")
     conn.execute("COPY HAS_CHUNK from community_chunk_rel_df")
 
     # Import entity -IN_COMMUNITY-> Community
@@ -359,6 +372,7 @@ def create_graph_db(path: str, docs: list[Document]):
         {"FROM": "string", "TO": "string"}
     )
 
+    print("COPY IN_COMMUNITY from entity_community_rel_df")
     conn.execute("COPY IN_COMMUNITY from entity_community_rel_df")
 
     # Import community -HAS_REPORT-> CommunityReport
@@ -382,6 +396,7 @@ def create_graph_db(path: str, docs: list[Document]):
         {"FROM": "string", "TO": "string"}
     )
 
+    print("COPY HAS_REPORT from community_report_rel_df")
     conn.execute("COPY HAS_REPORT from community_report_rel_df")
 
     # Import community -HAS_FINDING-> Finding
@@ -393,6 +408,7 @@ def create_graph_db(path: str, docs: list[Document]):
         {"FROM": "string", "TO": "string"}
     )
 
+    print("COPY HAS_FINDING from community_finding_rel_df")
     conn.execute("COPY HAS_FINDING from community_finding_rel_df")
 
     # connect graphrag schema with the kotaemone data schema
@@ -410,7 +426,9 @@ def create_graph_db(path: str, docs: list[Document]):
     document_file_chunk_rel_df2 = document_file_chunk_rel_df[["FROM", "TO"]]
     print(f"merged document count: {len(document_file_chunk_rel_df2)}")
 
-    conn.execute("CREATE TABLE REL FROM_FILE_CHUNK(FROM Document TO FileChunk)")
+    conn.execute("CREATE REL TABLE FROM_FILE_CHUNK(FROM Document TO FileChunk)")
+
+    print("COPY FROM_FILE_CHUNK from document_file_chunk_rel_df2")
     conn.execute("COPY FROM_FILE_CHUNK from document_file_chunk_rel_df2")
 
     return conn

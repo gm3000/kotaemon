@@ -2,13 +2,11 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from shutil import rmtree
 from typing import Generator
 from uuid import uuid4
 
-import pandas as pd
+import ast
 import tiktoken
-import yaml
 from decouple import config
 from ktem.db.models import engine
 from sqlalchemy.orm import Session
@@ -20,27 +18,20 @@ from ..pipelines import BaseFileIndexRetriever, IndexDocumentPipeline, IndexPipe
 from .visualize import create_knowledge_graph, visualize_graph
 from .graphrag.graph_db import create_graph_db
 from .graphrag.prompts import entityextraction
+from .graphrag.context_gdb_builder import LocalGraphDBSearchMixedContext
 
 try:
+    import tiktoken
     from graphrag.query.context_builder.entity_extraction import EntityVectorStoreKey
-    from graphrag.query.indexer_adapters import (
-        read_indexer_entities,
-        read_indexer_relationships,
-        read_indexer_reports,
-        read_indexer_text_units,
-    )
-    from graphrag.query.input.loaders.dfs import store_entity_semantic_embeddings
     from graphrag.query.llm.oai.embedding import OpenAIEmbedding
     from graphrag.query.llm.oai.typing import OpenaiApiType
-    from graphrag.query.structured_search.local_search.mixed_context import (
-        LocalSearchMixedContext,
-    )
     from graphrag.vector_stores.lancedb import LanceDBVectorStore
+    import kuzu
 except ImportError:
     print(
         (
-            "GraphRAG dependencies not installed. "
-            "Try `pip install graphrag future` to install. "
+            "GraphRAG with graph db dependencies not installed. "
+            "Try `pip install graphrag kuzu future` to install. "
             "GraphRAG retriever pipeline will not work properly."
         )
     )
@@ -217,69 +208,38 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
             assert graph_id, f"GraphRAG index not found for file_id: {file_id}"
 
         root_path, _ = prepare_graph_index_path(graph_id)
-        output_path = root_path / "output"
+        LANCEDB_URI = f"{root_path}/output/lancedb"
+        graph_db_uri = root_path / "graph_db"
 
-        INPUT_DIR = output_path
-        LANCEDB_URI = str(INPUT_DIR / "lancedb")
-        COMMUNITY_REPORT_TABLE = "create_final_community_reports"
-        ENTITY_TABLE = "create_final_nodes"
-        ENTITY_EMBEDDING_TABLE = "create_final_entities"
-        RELATIONSHIP_TABLE = "create_final_relationships"
-        TEXT_UNIT_TABLE = "create_final_text_units"
-        COMMUNITY_LEVEL = 2
-
-        # read nodes table to get community and degree data
-        entity_df = pd.read_parquet(f"{INPUT_DIR}/{ENTITY_TABLE}.parquet")
-        entity_embedding_df = pd.read_parquet(
-            f"{INPUT_DIR}/{ENTITY_EMBEDDING_TABLE}.parquet"
-        )
-        entities = read_indexer_entities(
-            entity_df, entity_embedding_df, COMMUNITY_LEVEL
-        )
+        # load graph database
+        db = kuzu.Database(graph_db_uri, read_only=True)
+        conn = kuzu.Connection(db)
 
         # load description embeddings to an in-memory lancedb vectorstore
         # to connect to a remote db, specify url and port values.
         description_embedding_store = LanceDBVectorStore(
-            collection_name="entity_description_embeddings",
+            collection_name="default-entity-description",
         )
         description_embedding_store.connect(db_uri=LANCEDB_URI)
-        if Path(LANCEDB_URI).is_dir():
-            rmtree(LANCEDB_URI)
-        _ = store_entity_semantic_embeddings(
-            entities=entities, vectorstore=description_embedding_store
-        )
-        print(f"Entity count: {len(entity_df)}")
-
-        # Read relationships
-        relationship_df = pd.read_parquet(f"{INPUT_DIR}/{RELATIONSHIP_TABLE}.parquet")
-        relationships = read_indexer_relationships(relationship_df)
-
-        # Read community reports
-        report_df = pd.read_parquet(f"{INPUT_DIR}/{COMMUNITY_REPORT_TABLE}.parquet")
-        reports = read_indexer_reports(report_df, entity_df, COMMUNITY_LEVEL)
-
-        # Read text units
-        text_unit_df = pd.read_parquet(f"{INPUT_DIR}/{TEXT_UNIT_TABLE}.parquet")
-        text_units = read_indexer_text_units(text_unit_df)
 
         # initialize default settings
         embedding_model = os.getenv(
             "GRAPHRAG_EMBEDDING_MODEL", "text-embedding-3-small"
         )
         embedding_api_key = os.getenv("GRAPHRAG_API_KEY")
-        embedding_api_base = None
+        embedding_api_base = os.getenv("GRAPHRAG_API_BASE")
 
-        # use customized GraphRAG settings if the flag is set
-        if config("USE_CUSTOMIZED_GRAPHRAG_SETTING", default="value").lower() == "true":
-            settings_yaml_path = Path(root_path) / "settings.yaml"
-            with open(settings_yaml_path, "r") as f:
-                settings = yaml.safe_load(f)
-            if settings["embeddings"]["llm"]["model"]:
-                embedding_model = settings["embeddings"]["llm"]["model"]
-            if settings["embeddings"]["llm"]["api_key"]:
-                embedding_api_key = settings["embeddings"]["llm"]["api_key"]
-            if settings["embeddings"]["llm"]["api_base"]:
-                embedding_api_base = settings["embeddings"]["llm"]["api_base"]
+        # # use customized GraphRAG settings if the flag is set
+        # if config("USE_CUSTOMIZED_GRAPHRAG_SETTING", default="value").lower() == "true":
+        #     settings_yaml_path = Path(root_path) / "settings.yaml"
+        #     with open(settings_yaml_path, "r") as f:
+        #         settings = yaml.safe_load(f)
+        #     if settings["embeddings"]["llm"]["model"]:
+        #         embedding_model = settings["embeddings"]["llm"]["model"]
+        #     if settings["embeddings"]["llm"]["api_key"]:
+        #         embedding_api_key = settings["embeddings"]["llm"]["api_key"]
+        #     if settings["embeddings"]["llm"]["api_base"]:
+        #         embedding_api_base = settings["llm"]["api_base"]
 
         text_embedder = OpenAIEmbedding(
             api_key=embedding_api_key,
@@ -291,20 +251,14 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
         )
         token_encoder = tiktoken.get_encoding("cl100k_base")
 
-        context_builder = LocalSearchMixedContext(
-            community_reports=reports,
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            covariates=None,
+        graph_context_builder = LocalGraphDBSearchMixedContext(
+            conn=conn,
             entity_text_embeddings=description_embedding_store,
-            embedding_vectorstore_key=EntityVectorStoreKey.ID,
-            # if the vectorstore uses entity title as ids,
-            # set this to EntityVectorStoreKey.TITLE
+            embedding_vectorstore_key=EntityVectorStoreKey.ID,  # if the vectorstore uses entity title as ids, set this to EntityVectorStoreKey.TITLE
             text_embedder=text_embedder,
             token_encoder=token_encoder,
         )
-        return context_builder
+        return graph_context_builder, conn
 
     def _to_document(self, header: str, context_text: str) -> RetrievedDocument:
         return RetrievedDocument(
@@ -317,7 +271,9 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
             score=1.0,
         )
 
-    def format_context_records(self, context_records) -> list[RetrievedDocument]:
+    def format_context_records(
+        self, context_records, conn: kuzu.Connection
+    ) -> list[RetrievedDocument]:
         entities = context_records.get("entities", [])
         relationships = context_records.get("relationships", [])
         reports = context_records.get("reports", [])
@@ -345,13 +301,40 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
             context += content
         docs.append(self._to_document(header, context))
 
-        header = "\n<b>Sources</b>\n"
-        context = ""
+        # we will trace back to original files
         for idx, row in sources.iterrows():
-            title, content = row["id"], row["text"]
-            context += f"\n\n<h5>Source <b>#{title}</b></h5>\n"
+            title, content, document_id = (
+                row["id"],
+                row["text"],
+                ast.literal_eval(row["document_ids"]),
+            )
+            context = f"\n\n<h5>Source <b>#{title}</b></h5>\n"
             context += content
-        docs.append(self._to_document(header, context))
+            # search document - file chunk data from conn
+            cypher = """
+                MATCH (d:Document)-[:FROM_FILE_CHUNK]->(fc:FileChunk)<-[:HAS_FILE_CHUNK]-(f:File)
+                WHERE d.id IN $doc_ids
+                RETURN fc.*, f.*
+            """
+            db_query_result = conn.execute(cypher, {"doc_ids": document_id[:1]})
+            result_df = db_query_result.get_as_df()
+            # only get first
+            first_row = result_df.iloc[0]
+            docs.append(
+                RetrievedDocument(
+                    text=context,
+                    metadata={
+                        "file_name": first_row["f.file_name"],
+                        "type": first_row["f.file_type"],
+                        "file_type": first_row["f.file_type"],
+                        "file_path": first_row["f.file_path"],
+                        "page_label": first_row["fc.page_label"],
+                        "llm_trulens_score": 1.0,
+                    },
+                    score=1.0,
+                )
+            )
+        # docs.append(self._to_document(header, context))
 
         return docs
 
@@ -374,7 +357,7 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
         if not check_graphrag_api_key():
             raise ValueError(GRAPHRAG_KEY_MISSING_MESSAGE)
 
-        context_builder = self._build_graph_search()
+        context_builder, conn = self._build_graph_search()
 
         local_context_params = {
             "text_unit_prop": 0.5,
@@ -395,12 +378,13 @@ class GraphRAGRetrieverPipeline(BaseFileIndexRetriever):
             # (if you are using a model with 8k limit, a good setting could be 5000)
         }
 
-        context_text, context_records = context_builder.build_context(
+        result = context_builder.build_context(
             query=text,
             conversation_history=None,
             **local_context_params,
         )
-        documents = self.format_context_records(context_records)
+        context_records = result.context_records
+        documents = self.format_context_records(context_records, conn)
         plot = self.plot_graph(context_records)
 
         return documents + [

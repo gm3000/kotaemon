@@ -171,23 +171,23 @@ class ChatPage(BasePage):
                                 self._indices_input.append(gr_index)
                         setattr(self, f"_index_{index.id}", index_ui)
 
-                if len(self._app.index_manager.indices) > 0:
-                    with gr.Accordion(label="Quick Upload") as _:
-                        self.quick_file_upload = File(
-                            file_types=list(KH_DEFAULT_FILE_EXTRACTORS.keys()),
-                            file_count="multiple",
-                            container=True,
-                            show_label=False,
-                            elem_id="quick-file",
-                        )
-                        self.quick_urls = gr.Textbox(
-                            placeholder="Or paste URLs here",
-                            lines=1,
-                            container=False,
-                            show_label=False,
-                            elem_id="quick-url",
-                        )
-                        self.quick_file_upload_status = gr.Markdown()
+                # if len(self._app.index_manager.indices) > 0:
+                #     with gr.Accordion(label="Quick Upload") as _:
+                #         self.quick_file_upload = File(
+                #             file_types=list(KH_DEFAULT_FILE_EXTRACTORS.keys()),
+                #             file_count="multiple",
+                #             container=True,
+                #             show_label=False,
+                #             elem_id="quick-file",
+                #         )
+                #         self.quick_urls = gr.Textbox(
+                #             placeholder="Or paste URLs here",
+                #             lines=1,
+                #             container=False,
+                #             show_label=False,
+                #             elem_id="quick-url",
+                #         )
+                #         self.quick_file_upload_status = gr.Markdown()
 
                 self.report_issue = ReportIssue(self._app)
 
@@ -562,9 +562,7 @@ class ChatPage(BasePage):
             inputs=None,
             outputs=[self._preview_links],
             js=pdfview_js,
-        ).then(
-            fn=None, inputs=None, outputs=None, js=chat_input_focus_js
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=chat_input_focus_js)
 
         # evidence display on message selection
         self.chat_panel.chatbot.select(
@@ -586,9 +584,7 @@ class ChatPage(BasePage):
             inputs=None,
             outputs=[self._preview_links],
             js=pdfview_js,
-        ).then(
-            fn=None, inputs=None, outputs=None, js=chat_input_focus_js
-        )
+        ).then(fn=None, inputs=None, outputs=None, js=chat_input_focus_js)
 
         self.chat_control.cb_is_public.change(
             self.on_set_public_conversation,
@@ -951,9 +947,9 @@ class ChatPage(BasePage):
             settings["reasoning.options.simple.create_mindmap"] = session_use_mindmap
 
         if session_use_citation not in (DEFAULT_SETTING, None):
-            settings[
-                "reasoning.options.simple.highlight_citation"
-            ] = session_use_citation
+            settings["reasoning.options.simple.highlight_citation"] = (
+                session_use_citation
+            )
 
         if session_language not in (DEFAULT_SETTING, None):
             settings["reasoning.lang"] = session_language
@@ -1046,7 +1042,6 @@ class ChatPage(BasePage):
         )
 
         for response in pipeline.stream(chat_input, conversation_id, chat_history):
-
             if not isinstance(response, Document):
                 continue
 

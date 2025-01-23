@@ -599,7 +599,9 @@ class LocalGraphDBSearchMixedContext(LocalContextBuilder):
         }
         # Apply the renaming
         text_unit_df = text_unit_df.rename(columns=rename_dict)
-        related_text_units = read_text_units(text_unit_df, covariates_col=None)
+        related_text_units = read_text_units(
+            text_unit_df, covariates_col=None, attributes_cols=["document_ids"]
+        )
         related_text_units_map = {unit.id: unit for unit in related_text_units}
         relationship_values, _ = self._query_relationship(selected_entities)
 
