@@ -67,7 +67,7 @@ def add_source_file_to_db(conn: kuzu.Connection, documents: list[Document]):
         file_chunk_data.append(
             {
                 "id": doc.doc_id,
-                "page_label": doc.metadata["page_label"],
+                "page_label": doc.metadata.get("page_label", None),
                 "text": doc.text,
             }
         )
@@ -79,14 +79,14 @@ def add_source_file_to_db(conn: kuzu.Connection, documents: list[Document]):
             file_data.append(
                 {
                     "id": file_id,
-                    "file_name": doc.metadata["file_name"],
-                    "file_path": doc.metadata["file_path"],
-                    "file_type": doc.metadata["file_type"],
-                    "file_size": doc.metadata["file_size"],
-                    "creation_date": doc.metadata["creation_date"],
-                    "last_modified_date": doc.metadata["last_modified_date"],
-                    "collection_name": doc.metadata["collection_name"],
-                    "thumbnail_doc_id": doc.metadata["thumbnail_doc_id"],
+                    "file_name": doc.metadata.get("file_name", None),
+                    "file_path": doc.metadata.get("file_path", None),
+                    "file_type": doc.metadata.get("file_type", None),
+                    "file_size": doc.metadata.get("file_size", None),
+                    "creation_date": doc.metadata.get("creation_date", None),
+                    "last_modified_date": doc.metadata.get("last_modified_date", None),
+                    "collection_name": doc.metadata.get("collection_name", None),
+                    "thumbnail_doc_id": doc.metadata.get("thumbnail_doc_id", None),
                 }
             )
 
@@ -430,5 +430,7 @@ def create_graph_db(path: str, docs: list[Document]):
 
     print("COPY FROM_FILE_CHUNK from document_file_chunk_rel_df2")
     conn.execute("COPY FROM_FILE_CHUNK from document_file_chunk_rel_df2")
+
+    print("graphdb import finished!")
 
     return conn
