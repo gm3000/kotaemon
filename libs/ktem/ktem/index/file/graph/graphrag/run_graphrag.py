@@ -23,7 +23,7 @@ def _merge_relationships(relationship_dfs) -> pd.DataFrame:
                 "description": list,  # Aggregate "description" as a list
                 "source_id": list,  # Aggregate "source_id" as a list
                 "weight": "sum",  # Sum the "weight" column
-                "edge_name_timestamp": lambda x: ", ".join(
+                "edge_name_timestamp": lambda x: "%$%".join(
                     x.astype(str)
                 ),  # Concatenate "x" with a comma
             }

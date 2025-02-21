@@ -304,7 +304,7 @@ class GraphExtractor:
                             )
                             edge_name_timestamp = (
                                 str(edge_data["edge_name_timestamp"])
-                                + ","
+                                + "%$%"
                                 + str(edge_name_timestamp)
                             )
 

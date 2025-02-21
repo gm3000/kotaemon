@@ -1,6 +1,7 @@
 """All the steps to transform final relationships."""
 
 from typing import cast
+from datetime import datetime
 
 import pandas as pd
 from datashaper import (
@@ -61,6 +62,28 @@ async def create_final_relationships_multi_version(
 """All the steps to transform final relationships."""
 
 
+def valid_datetime(dt_str=""):
+    if not dt_str or dt_str == "":
+        return ""
+    # Define the date and datetime formats
+    date_format = "%d/%m/%Y"
+    datetime_format = "%H:%M:%S %d/%m/%Y"
+
+    # Try to parse the string with the datetime format first
+    try:
+        datetime.strptime(dt_str, datetime_format)
+        return dt_str
+    except ValueError:
+        pass
+
+    # If parsing with datetime format fails, try the date format
+    try:
+        datetime.strptime(dt_str, date_format)
+        return dt_str
+    except ValueError:
+        return ""
+
+
 def create_final_relationships_flow(
     base_relationship_edges: pd.DataFrame, base_entity_nodes: pd.DataFrame
 ) -> pd.DataFrame:
@@ -85,13 +108,14 @@ def create_final_relationships_flow(
     def extract_name_date(row):
         if pd.isna(row["edge_name_timestamp"]):
             return "", ""
-        name_date_pairs = row["edge_name_timestamp"].split(",")
+        name_date_pairs = row["edge_name_timestamp"].split("%$%")
         names = []
         dates = []
         for pair in name_date_pairs:
             name, date = pair.split("@")
             names.append(name)
-            dates.append(date)
+            # check date time string format DD/MM/YYYY or HH:MM:SS DD/MM/YYYY
+            dates.append(valid_datetime(date))
         return names, dates
 
     relationships[["name", "date"]] = relationships.apply(
